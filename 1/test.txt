@@ -1,0 +1,4 @@
+total 34
+-rwxr-xr-x 1 slu39 nogroup 21512 Oct  1 14:24 a.out
+-rw-r--r-- 1 slu39 nogroup 10795 Oct  1 14:24 stephen_lu_shell.c
+-rw-r--r-- 1 slu39 nogroup     0 Oct  1 14:28 test.txt
