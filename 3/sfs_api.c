@@ -5,28 +5,28 @@ unsigned int curr_file = 0;
 
 superblock_t super;
 inode_t inodes[NUM_INODES];
-file_descriptor fdt[NUM_INODES];
-directory_t root[NUM_FILE_INODES];
-bitmap_entry_t free_blocks[NUM_BITMAP_ENTRIES];
+file_descriptor_t fdt[NUM_INODES];
+directory_entry_t root[NUM_FILE_INODES];
+bitmap_entry_t free_blocks[MAX_DATA_BLOCKS_SCALED_DOWN];
 
 void init_super()
 {
     super.magic = 0xACBD0005;
     super.block_size = BLOCK_SIZE;
     super.inode_table_len = NUM_INODE_BLOCKS;
-
-    super.length_free_block_list = MAX_DATA_BLOCKS_SCALED_DOWN;
-    super.number_free_blocks = (sizeof(bitmap_entry_t) * NUM_BITMAP_ENTRIES) / BLOCK_SIZE + 1;
-    super.fs_size = (1 + NUM_DATA_BLOCKS_FOR_DIR + NUM_INODE_BLOCKS + MAX_DATA_BLOCKS_SCALED_DOWN + super.number_free_blocks) * BLOCK_SIZE;
-    
-    // printf("%lu\n", NUM_DATA_BLOCKS_FOR_DIR);
-    // printf("%lu\n", NUM_INODE_BLOCKS);
-    // printf("%lu\n", MAX_DATA_BLOCKS_SCALED_DOWN);
-    // printf("%lu\n", NUM_BITMAP_ENTRIES);
-    // printf("%lu\n", super.number_free_blocks);
-    // printf("%lu\n", super.fs_size);
-
     super.root_dir_inode = 0;
+    super.fs_size = BLOCK_SIZE * NUM_TOTAL_BLOCKS;
+}
+
+int get_free_bitmap_address() {
+    int bitmap_entry = -1;
+    for (int i=0; i<MAX_DATA_BLOCKS_SCALED_DOWN; i++) {
+        if (free_blocks[i] == 0) {
+            bitmap_entry = i;
+            break;
+        }
+    }
+    return bitmap_entry;
 }
 
 void mksfs(int fresh) {
@@ -34,7 +34,7 @@ void mksfs(int fresh) {
         init_super();
 
         for (int i=1; i<NUM_INODES; i++) {
-            inodes[i].taken = 0;
+            inodes[i].link_cnt = 0;
             fdt[i].inode = -1;
             memset(root[i-1].names, 0, MAX_FILENAME);
             root[i-1].mode = 0;
@@ -44,42 +44,35 @@ void mksfs(int fresh) {
         curr_file = 0;
         fdt[0].inode = 0;
         fdt[0].rwptr = 0;
-        inodes[0].taken = 1;
+        inodes[0].link_cnt = 1;
         memset(free_blocks, 0, sizeof(free_blocks));
 
-        init_fresh_disk(DISK_NAME, BLOCK_SIZE, super.fs_size / BLOCK_SIZE + 1);
+        init_fresh_disk(DISK_NAME, BLOCK_SIZE, NUM_TOTAL_BLOCKS);
         write_blocks(0, 1, &super);
         write_blocks(1, NUM_INODE_BLOCKS, inodes);
         write_blocks(1 + NUM_INODE_BLOCKS, NUM_DATA_BLOCKS_FOR_DIR, root);
-        write_blocks(BITMAP_BLOCK_OFFSET, super.number_free_blocks, free_blocks);
+        write_blocks(BITMAP_BLOCK_OFFSET, NUM_DATA_BLOCKS_FOR_BITMAP, free_blocks);
 
     } else {
+        init_disk(DISK_NAME, BLOCK_SIZE, NUM_TOTAL_BLOCKS);
 
         read_blocks(0, 1, &super);
         read_blocks(1, NUM_INODE_BLOCKS, inodes);
         read_blocks(1 + NUM_INODE_BLOCKS, NUM_DATA_BLOCKS_FOR_DIR, root);
-        read_blocks(BITMAP_BLOCK_OFFSET, super.number_free_blocks, free_blocks);
+        read_blocks(BITMAP_BLOCK_OFFSET, NUM_DATA_BLOCKS_FOR_BITMAP, free_blocks);
 
         curr_file = 0;
         num_files = 0;
 
         for (int i=1; i<NUM_INODES; i++) {
-            if (inodes[i].taken) num_files += 1;
+            if (inodes[i].link_cnt) num_files += 1;
             fdt[i].inode = -1;
             fdt[i].rwptr = 0;
         }
-    }
-}
 
-int get_free_bitmap_address() {
-    int bitmap_entry = -1;
-    for (int i=0; i<NUM_BITMAP_ENTRIES; i++) {
-        if (free_blocks[i].num == 0) {
-            bitmap_entry = i;
-            break;
-        }
+        fdt[0].inode = 0;
+        fdt[0].rwptr = 0;
     }
-    return bitmap_entry;
 }
 
 int sfs_getnextfilename(char* fname) {
@@ -127,7 +120,7 @@ int sfs_fopen(char* name) {
             int free_fd = -1;
 
             for (int j=1; j<NUM_INODES; j++) {
-                file_descriptor* f = &fdt[j];
+                file_descriptor_t* f = &fdt[j];
                 if (f->inode == i+1) return -1;
                 if (free_fd == -1 && f->inode == -1) free_fd = j;
             }
@@ -137,21 +130,21 @@ int sfs_fopen(char* name) {
             fdt[free_fd].inode = i+1;
             fdt[free_fd].rwptr = sfs_getfilesize(name); // sets pointer after last byte of data
             root[i].mode = 1;
-            inodes[i+1].taken = 1;
+            inodes[i+1].link_cnt = 1;
             return free_fd;
         }
     }
 
     for (int i=1; i<NUM_INODES; i++) {
-        if (inodes[i].taken == 0) {
+        if (inodes[i].link_cnt == 0) {
             for (int j=1; j<NUM_INODES; j++) {
-                file_descriptor* f = &fdt[j];
+                file_descriptor_t* f = &fdt[j];
                 if (f->inode == -1) {
                     f->inode = i;
                     f->rwptr = 0;
 
                     num_files += 1;
-                    inodes[i].taken = 1;
+                    inodes[i].link_cnt = 1;
                     inodes[i].mode = 1;
                     inodes[i].size = 0;
 
@@ -172,7 +165,7 @@ int sfs_fopen(char* name) {
 
 int sfs_fclose(int fileID) {
     if (fileID > 0 && fileID < NUM_INODES) {
-        file_descriptor* f = &fdt[fileID];
+        file_descriptor_t* f = &fdt[fileID];
         if (f->inode != -1) {
             f->inode = -1;
             f->rwptr = 0;
@@ -185,7 +178,7 @@ int sfs_fclose(int fileID) {
 int sfs_fwrite(int fileID, const char* buf, int length) {
     int bytes_written = 0;
     int bytes_to_write = length;
-    file_descriptor* f = &fdt[fileID];
+    file_descriptor_t* f = &fdt[fileID];
 
     if (
         length <= 0 ||
@@ -199,8 +192,6 @@ int sfs_fwrite(int fileID, const char* buf, int length) {
     int did_write_to_disk = 1;
     int current_block = f->rwptr / BLOCK_SIZE;
     int rwptr_size_offset = -(inodes[f->inode].size - f->rwptr);
-
-    // printf("File size before write: %d\n", inodes[f->inode].size);
 
     inode_t* node = &inodes[f->inode];
 
@@ -231,7 +222,7 @@ int sfs_fwrite(int fileID, const char* buf, int length) {
                     printf("Fatal error could not allocate empty data block.\n");
                     break;
                 }
-                free_blocks[bitmap_entry].num = 1;
+                free_blocks[bitmap_entry] = 1;
                 node->data_ptrs[current_block] = bitmap_entry + DATA_BLOCKS_OFFSET;
             }
         } else {
@@ -241,7 +232,7 @@ int sfs_fwrite(int fileID, const char* buf, int length) {
                     printf("Fatal error could not allocate empty data block.\n");
                     break;
                 }
-                free_blocks[ptr_bitmap_entry].num = 1;
+                free_blocks[ptr_bitmap_entry] = 1;
                 memset(ptr_buff, 0, sizeof(ptr_buff));
 
                 did_load_ptr_buff = 1;
@@ -262,7 +253,7 @@ int sfs_fwrite(int fileID, const char* buf, int length) {
                     printf("Fatal error could not allocate empty data block.\n");
                     break;
                 }
-                free_blocks[bitmap_entry].num = 1;
+                free_blocks[bitmap_entry] = 1;
                 ptr_buff[ptr_address] = bitmap_entry + DATA_BLOCKS_OFFSET;
             }
         }
@@ -275,7 +266,7 @@ int sfs_fwrite(int fileID, const char* buf, int length) {
             memcpy(buff+block_offset, buf+bytes_written, bytes_count);
             write_blocks(bitmap_entry + DATA_BLOCKS_OFFSET, 1, (void*) buff);
 
-            free_blocks[bitmap_entry].num = 1;
+            free_blocks[bitmap_entry] = 1;
             rwptr_size_offset += bytes_count;
             f->rwptr += bytes_count;
             bytes_to_write -= bytes_count;
@@ -287,18 +278,13 @@ int sfs_fwrite(int fileID, const char* buf, int length) {
     }
 
     if (bytes_to_write != length) {
-        
-        // printf("R/W ptr size offset after write: %d\n", rwptr_size_offset);
-
         // we did write to data blocks, so we must update file metadata
         if (rwptr_size_offset > 0) node->size += rwptr_size_offset;
         if (did_load_ptr_buff) write_blocks(node->indirect, 1, (void*) ptr_buff);
 
         write_blocks(1, NUM_INODE_BLOCKS, inodes);
-        write_blocks(BITMAP_BLOCK_OFFSET, super.number_free_blocks, free_blocks);
+        write_blocks(BITMAP_BLOCK_OFFSET, NUM_DATA_BLOCKS_FOR_BITMAP, free_blocks);
     }
-
-    // printf("File size after write: %d\n", inodes[f->inode].size);
 
     return bytes_written;
 }
@@ -306,7 +292,7 @@ int sfs_fwrite(int fileID, const char* buf, int length) {
 int sfs_fread(int fileID, char* buf, int length) {
     int bytes_read = 0;
     int bytes_to_read = length;
-    file_descriptor* f = &fdt[fileID];
+    file_descriptor_t* f = &fdt[fileID];
     
     if (
         length <= 0 ||
@@ -332,8 +318,6 @@ int sfs_fread(int fileID, char* buf, int length) {
         bytes_to_read > 0 &&
         current_block < (MAX_DATA_BLOCKS_PER_FILE - 1)
     ) {
-        // printf("R/W pointer before reading from block %d: %lu\n", current_block, f->rwptr);
-
         did_write_to_buf = 0;
         did_read_current_block = 0;
 
@@ -374,8 +358,6 @@ int sfs_fread(int fileID, char* buf, int length) {
                 current_block = f->rwptr / BLOCK_SIZE;
             }
         }
-
-        // printf("R/W pointer after reading from block %d: %lu\n", current_block, f->rwptr);
     }
 
     return bytes_read;
@@ -383,7 +365,7 @@ int sfs_fread(int fileID, char* buf, int length) {
 
 int sfs_fseek(int fileID, int loc) {
     if (fileID > 0 && fileID < NUM_INODES) {
-        file_descriptor* f = &fdt[fileID];
+        file_descriptor_t* f = &fdt[fileID];
         if (
             f->inode == -1 ||
             f->inode == 0 ||
@@ -420,7 +402,7 @@ int sfs_remove(char* file) {
         }
     }
 
-    if (inode > 0 && inodes[inode].taken == 1) {
+    if (inode > 0 && inodes[inode].link_cnt == 1) {
 
         inode_t* n = &inodes[inode];
         char buff[BLOCK_SIZE] = "";
@@ -429,10 +411,7 @@ int sfs_remove(char* file) {
         for (int i=0; i<NUM_DIRECT_POINTERS; i++) {
             if (n->data_ptrs[i] > 0) {
                 int bitmap_entry = n->data_ptrs[i] - DATA_BLOCKS_OFFSET;
-
-                // printf("Removing data block %d with bitmap index: %d\n", n->data_ptrs[i], bitmap_entry);
-
-                free_blocks[bitmap_entry].num = 0;
+                free_blocks[bitmap_entry] = 0;
                 write_blocks(n->data_ptrs[i], 1, (void*) buff);
             }
 
@@ -445,10 +424,7 @@ int sfs_remove(char* file) {
             for (int i=0; i<NUM_POINTERS_IN_INDIRECT-1; i++) {
                 if (ptr_buff[i] > 0) {
                     int bitmap_entry = ptr_buff[i] - DATA_BLOCKS_OFFSET;
-
-                    // printf("Removing data block %d with bitmap index: %d\n", ptr_buff[i], bitmap_entry);
-
-                    free_blocks[bitmap_entry].num = 0;
+                    free_blocks[bitmap_entry] = 0;
                     write_blocks(ptr_buff[i], 1, (void*) buff);
                 }
             }
@@ -459,12 +435,12 @@ int sfs_remove(char* file) {
 
         n->mode = 0;
         n->size = 0;
-        n->taken = 0;
+        n->link_cnt = 0;
         num_files -= 1;
 
         write_blocks(1, NUM_INODE_BLOCKS, inodes);
         write_blocks(1 + NUM_INODE_BLOCKS, NUM_DATA_BLOCKS_FOR_DIR, root);
-        write_blocks(BITMAP_BLOCK_OFFSET, super.number_free_blocks, free_blocks);
+        write_blocks(BITMAP_BLOCK_OFFSET, NUM_DATA_BLOCKS_FOR_BITMAP, free_blocks);
     }
 
     return inode;

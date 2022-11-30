@@ -55,51 +55,45 @@
 #define PTR_SIZE sizeof(unsigned int)
 #define NUM_POINTERS_IN_INDIRECT (BLOCK_SIZE / PTR_SIZE + 1)
 
-#define NUM_INODE_BLOCKS (sizeof(inode_t) * NUM_INODES / BLOCK_SIZE + 1)
 #define MAX_DATA_BLOCKS_PER_FILE  (12 + NUM_POINTERS_IN_INDIRECT)
-#define NUM_DATA_BLOCKS_FOR_DIR (sizeof(directory_t) * NUM_FILE_INODES / BLOCK_SIZE + 1)
-
 #define MAX_DATA_BLOCKS_TOTAL (NUM_FILE_INODES * MAX_DATA_BLOCKS_PER_FILE)
 #define MAX_DATA_BLOCKS_SCALED_DOWN (MAX_DATA_BLOCKS_TOTAL / 16)
-#define NUM_BITMAP_ENTRIES (MAX_DATA_BLOCKS_SCALED_DOWN / sizeof(bitmap_entry_t))
+
+#define NUM_INODE_BLOCKS (sizeof(inode_t) * NUM_INODES / BLOCK_SIZE + 1)
+#define NUM_DATA_BLOCKS_FOR_DIR (sizeof(directory_entry_t) * NUM_FILE_INODES / BLOCK_SIZE + 1)
+#define NUM_DATA_BLOCKS_FOR_BITMAP ((sizeof(bitmap_entry_t) * MAX_DATA_BLOCKS_SCALED_DOWN) / BLOCK_SIZE + 1)
+#define NUM_TOTAL_BLOCKS (1 + NUM_DATA_BLOCKS_FOR_DIR + NUM_INODE_BLOCKS + MAX_DATA_BLOCKS_SCALED_DOWN + NUM_DATA_BLOCKS_FOR_BITMAP)
+
 #define DATA_BLOCKS_OFFSET (1 + NUM_DATA_BLOCKS_FOR_DIR + NUM_INODE_BLOCKS)
 #define BITMAP_BLOCK_OFFSET (DATA_BLOCKS_OFFSET + MAX_DATA_BLOCKS_SCALED_DOWN)
 
 typedef struct {
-    uint64_t magic;
-    uint64_t block_size;
-    uint64_t fs_size;
-    uint64_t inode_table_len;
-    uint64_t root_dir_inode;
-
-    uint64_t length_free_block_list;
-    uint64_t number_free_blocks;
+    unsigned int magic;
+    unsigned int block_size;
+    unsigned int fs_size;
+    unsigned int inode_table_len;
+    unsigned int root_dir_inode;
 } superblock_t;
 
 typedef struct {
     unsigned int mode;
-    unsigned int taken;
     unsigned int link_cnt;
-    unsigned int uid;
-    unsigned int gid;
     unsigned int size;
     unsigned int data_ptrs[NUM_DIRECT_POINTERS];
     unsigned int indirect;
 } inode_t;
 
 typedef struct {
-    char names[MAX_FILENAME];
     unsigned int mode;
-} directory_t;
+    char names[MAX_FILENAME];
+} directory_entry_t;
 
 typedef struct {
-    int64_t inode;
+    int inode;
     uint64_t rwptr;
-} file_descriptor;
+} file_descriptor_t;
 
-typedef struct {
-    unsigned char num;
-} bitmap_entry_t;
+typedef unsigned char bitmap_entry_t;
 
 void mksfs(int fresh);
 int sfs_getnextfilename(char* fname);
