@@ -1,3 +1,14 @@
+/** @file sfs_api.h
+ *  @brief Global variables, datatypes and function prototypes for the file system.
+ *
+ *  This contains the prototypes for the file
+ *  system api and any macros, constants, datatypes
+ *  or global variables you will need.
+ *
+ *  @author Stephen Z. Lu (thematrixmaster)
+ *  @bug No known bugs.
+ */
+
 #ifndef SFS_API_H
 #define SFS_API_H
 
@@ -9,39 +20,47 @@
 
 #include "disk_emu.h"
 
-/*
-    BLOCK_SIZE => set 2048 bytes per block
-    NUM_INODES => set 193 inodes (1st inode belongs to root dir)
-    NUM_FILE_INODES => helper const to get number of inodes for files
-    NUM_DIRECT_POINTERS => each inode has 12 direct & 1 indirect pointers
+/**  @brief MACROS
+    MAX_FILENAME => set 60 bytes as the max filename size
+    DISK_NAME => set the diskname to use for our filesystem
 
-    PTR_SIZE => get block pointer size (4 bytes for unsigned int)
+    BLOCK_SIZE => set 1024 bytes per block
+    NUM_INODES => set 128 inodes (1st inode belongs to root dir)
+    NUM_FILE_INODES => helper const to get number of inodes for files
+    NUM_DIRECT_POINTERS => each inode has 12 direct pointers
+
+    PTR_SIZE => get pointer size (4 bytes for unsigned int)
     NUM_POINTERS_IN_INDIRECT =>
         Our indirect pointer will point to an intermediate data block which will itself be filled with 
-        as many pointers as possile. Thus, we want to figure out the number of pointers we can fit in
+        as many pointers as possile. Thus, we want to calculate the number of pointers we can fit in
         1 block plus the indirect pointer that connect the inode to this intermediate block. 
 
-    NUM_INODE_BLOCKS => find the number of blocks needed to fit all inodes
-    MAX_DATA_BLOCKS_PER_FILE => max number of data blocks that 1 inode can point to using direct and indirect ptrs
-    
+    MAX_DATA_BLOCKS_PER_FILE => max number of data blocks that 1 inode can point to using all ptrs
+    MAX_DATA_BLOCKS_TOTAL => 
+        Max number of data blocks is a fictional number that represents the total number of data blocks
+        required if we were to fill all inodes with the maximum number of data blocks per inode.
+        This is equal to the number of file inodes times the max data blocks per inode.
+    MAX_DATA_BLOCKS_SCALED_DOWN => 
+        We cannot realistically have MAX_DATA_BLOCKS_TOTAL data blocks in our filesystem, so we will
+        scale that number down by a given factor.
+        
+    NUM_INODE_BLOCKS => number of blocks needed to fit all 128 inodes
     NUM_DATA_BLOCKS_FOR_DIR =>
         We compute the number of data blocks that the directory table will take up. This is equal to the 
         size of a directory entry times the maximum number of files it can contain (# file inodes) divided
-        by the block size rounded up.
+        by the block size.
+    NUM_DATA_BLOCKS_FOR_BITMAP =>
+        This is the number of blocks required to fit our bitmap array that keeps track of free data blocks.
+        This is equal to the size of a bitmap entry times the number of data blocks divided by the block size.
+    NUM_TOTAL_BLOCKS =>
+        We can now calculate the total number of blocks that our filesystem will occupy using the values computed above.
 
-    MAX_DATA_BLOCKS_TOTAL => 
-        Max number of data blocks that we will allocate is equal to the max number of data blocks that all non-root-dir inodes can point to.
-        This is equal to the number of inodes minus 1 (for root dir) times the max data blocks per inode.
-
-    NUM_BITMAP_ENTRIES =>
-        We will keep track of the free data blocks using a list of 64 bit unsigned integers. 
-        Each int will cover 64 data blocks, so the number of such integers we will need to cover all data
-        blocks will be equal to the total number of free data blocks divided by 64.
-
+    DATA_BLOCKS_OFFSET =>
+        This is the starting address in the disk for storing our data blocks. This starting address is offset
+        by the superblock, inode blocks, and directory table blocks.
     BITMAP_BLOCK_OFFSET =>
         We want to store the bitmap at the end of the disk, so we need to calculate the offset of blocks
-        that comes before the bitmap. This is equal to the address after we store the blocks for the root
-        directory, inodes, and free data blocks
+        that comes before the bitmap. This is equal to the address after we store the data blocks
 */
 
 #define MAX_FILENAME 60
@@ -67,6 +86,11 @@
 #define DATA_BLOCKS_OFFSET (1 + NUM_DATA_BLOCKS_FOR_DIR + NUM_INODE_BLOCKS)
 #define BITMAP_BLOCK_OFFSET (DATA_BLOCKS_OFFSET + MAX_DATA_BLOCKS_SCALED_DOWN)
 
+
+/** @brief Data structure for Superblock
+ * occupies 20 bytes and stores
+ * metadata about the file system
+*/
 typedef struct {
     unsigned int magic;
     unsigned int block_size;
@@ -75,24 +99,45 @@ typedef struct {
     unsigned int root_dir_inode;
 } superblock_t;
 
+/** @struct i-node occupies 64 bytes and stores:
+ * mode: indicates if file is opened
+ * link_cnt: indicates if inode is taken
+ * size: total size of file contents in bytes
+ * direct: array of direct data block pointers
+ * indirect: single indirect data block pointer
+*/
 typedef struct {
     unsigned int mode;
     unsigned int link_cnt;
     unsigned int size;
-    unsigned int data_ptrs[NUM_DIRECT_POINTERS];
+    unsigned int direct[NUM_DIRECT_POINTERS];
     unsigned int indirect;
 } inode_t;
 
+/** @struct directory table entry 
+ * occupies 64 bytes and stores a duplicate
+ * of the i-node mode field and a char array
+ * for the filename
+*/
 typedef struct {
     unsigned int mode;
     char names[MAX_FILENAME];
 } directory_entry_t;
 
+/** @struct file descriptor
+ * occupies 16 bytes and stores a ref
+ * to the inode and the file's current
+ * read-write address
+*/
 typedef struct {
     int inode;
     uint64_t rwptr;
 } file_descriptor_t;
 
+/** @struct bitmap entry 
+ * is simply an unsigned 
+ * char that can be set to 0 or 1
+*/
 typedef unsigned char bitmap_entry_t;
 
 void mksfs(int fresh);

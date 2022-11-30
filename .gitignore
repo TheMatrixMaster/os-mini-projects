@@ -1,3 +1,6 @@
 .vscode/
 .disk
-
+exec_files
+obj_files
+.o
+thematrixmaster.disk
