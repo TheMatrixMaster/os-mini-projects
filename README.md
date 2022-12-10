@@ -1,5 +1,5 @@
-# comp-310-assignments
+# mini-os projects in linux
 
-## Assignment 1 - Simple System Shell (Processes)
-## Assignment 2 - Multithreading (pThreads)
-## Assignment 3 - Mountable File System
+### 1 - Simple System Shell (Processes)
+### 2 - Multithreading (pThreads)
+### 3 - Mountable File System
